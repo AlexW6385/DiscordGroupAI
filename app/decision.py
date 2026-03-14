@@ -1,11 +1,32 @@
 import json
 import logging
+import os
 from pydantic import BaseModel, Field
 from openai import AsyncOpenAI
 from app.config import settings
 
 logger = logging.getLogger(__name__)
 client = AsyncOpenAI(api_key=settings.openai_api_key)
+
+DEFAULT_DECISION_PROMPT = """You are the decision engine for a Discord group chat bot. For each turn you must output a priority score from 0.0 to 1.0.
+
+Scoring rules (use the full range; do NOT cluster at 0.7–0.8):
+- 0.0–0.2: No need to reply (greetings to others, off-topic, meme-only, or replying would be noise).
+- 0.3–0.4: Weak reason to reply (topic slightly relevant but bot not needed).
+- 0.5–0.6: Optional (could add something useful but not necessary).
+- 0.7–0.8: Good reason (e.g. direct question, or clearly relevant and valuable to chime in).
+- 0.9–1.0: Strong reason (explicitly @ the bot, or urgent/clear request for the bot).
+
+Use precise decimals (e.g. 0.25, 0.55, 0.72). Most messages should be in the 0.2–0.5 range; reserve 0.7+ only when the bot is clearly needed. Also set should_respond, mode, tone, max_words. Output JSON exactly matching this schema:
+{schema}"""
+
+
+def _load_decision_system_prompt() -> str:
+    schema = json.dumps(BotDecisionSchema.model_json_schema(), indent=2)
+    if settings.decision_prompt_file and os.path.isfile(settings.decision_prompt_file):
+        with open(settings.decision_prompt_file, "r", encoding="utf-8") as f:
+            return f.read().strip().format(schema=schema)
+    return DEFAULT_DECISION_PROMPT.format(schema=schema)
 
 class BotDecisionSchema(BaseModel):
     should_respond: bool = Field(description="Whether the bot should respond to the current context.")
@@ -20,50 +41,57 @@ async def decide_to_speak(context: list[dict], bot_id: int) -> BotDecisionSchema
     """
     Uses a small/fast LLM to decide if the bot should speak.
     """
-    # Build a lightweight prompt of recent activity
+    n = settings.decision_context_messages
     conversation_log = ""
-    for msg in context[-15:]: # Only use the last 15 messages for decision to save tokens
+    for msg in context[-n:]:
         user = msg.get("username")
         content = msg.get("content")
         conversation_log += f"{user}: {content}\n"
 
-    system_prompt = f"""You are the decision engine for an autonomous Discord group chat bot.
-Your goal is to decide whether the bot should participate in the conversation.
-You want to behave like a natural, slightly introverted group member:
-- Don't respond to every single message.
-- Score priority high (0.8-1.0) when: directly addressed/tagged, or a clear question to you, or your reply would add real value.
-- Score priority medium (0.5-0.7) when: someone says hi/greeting to the group (you may say hi back), or the topic is interesting.
-- Score priority low (0.0-0.4) only for: pure memes, off-topic spam, or when replying would be clearly redundant.
-- If the last message is a simple greeting or "are you there" and you have not spoken recently, prefer replying (priority at least 0.5).
-- Minimize token usage by keeping responses brief.
-
-Review the recent conversation log and output your decision in JSON format EXACTLY matching the following JSON schema:
-{json.dumps(BotDecisionSchema.model_json_schema(), indent=2)}
-"""
+    system_prompt = _load_decision_system_prompt()
+    raw = ""
 
     try:
         response = await client.chat.completions.create(
-            model="gpt-4o-mini", # Fast model for decisions
+            model=settings.decision_model,
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Recent Conversation:\n{conversation_log}\n\nDecision:"}
+                {"role": "user", "content": f"Recent conversation:\n{conversation_log}\n\nYour decision (JSON):"}
             ],
             response_format={"type": "json_object"},
-            temperature=0.2
+            temperature=settings.decision_temperature,
         )
 
-        result_json = response.choices[0].message.content.strip()
-        
-        # Safely extract JSON if the LLM output is wrapped in ```json ... ```
-        if "```json" in result_json:
-            result_json = result_json.split("```json")[1].split("```")[0].strip()
-        elif "```" in result_json:
-            result_json = result_json.split("```")[1].strip()
+        raw = (response.choices[0].message.content or "").strip()
+        # 从可能带前后文的文本里抽出 JSON（模型有时会加 "Here is..." 等）
+        if "```json" in raw:
+            result_json = raw.split("```json")[1].split("```")[0].strip()
+        elif "```" in raw:
+            result_json = raw.split("```")[1].strip()
+        else:
+            start = raw.find("{")
+            end = raw.rfind("}")
+            if start != -1 and end != -1 and end > start:
+                result_json = raw[start : end + 1]
+            else:
+                result_json = raw
 
         data = json.loads(result_json)
-        return BotDecisionSchema(**data)
+        # 模型有时会包在 "properties" 里，需要解开
+        if isinstance(data.get("properties"), dict):
+            data = data["properties"]
+        decision_result = BotDecisionSchema(**data)
+        logger.info(
+            "决策输入(共%d条): %s | 输出: priority=%.2f should_respond=%s reason=%s",
+            len(context[-n:]),
+            conversation_log.strip().replace("\n", " ")[:300],
+            decision_result.priority,
+            decision_result.should_respond,
+            (decision_result.reason or "")[:80],
+        )
+        return decision_result
     except Exception as e:
-        logger.warning("Error parsing decision JSON: %s", e)
+        logger.warning("Error parsing decision JSON: %s | raw: %s", e, raw[:500] if raw else "(empty)")
         # Default to safe "no response" if it fails
         return BotDecisionSchema(
             should_respond=False,

@@ -1,16 +1,22 @@
 import asyncio
 import logging
+import os
 import uvicorn
 from app.config import settings
 from app.discord_bot.bot import bot
 from app.api.server import app as fastapi_app
 from app.redis_client import redis_client
 
-# Setup basic logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+# 所有日志只写文件，控制台不输出（控制台仅由 bot 打印 内容|分数|回复）
+log_dir = settings.log_dir
+os.makedirs(log_dir, exist_ok=True)
+log_file = os.path.join(log_dir, "discord_bot.log")
+_file_handler = logging.FileHandler(log_file, encoding="utf-8")
+_file_handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
+logging.getLogger().setLevel(logging.DEBUG)
+logging.getLogger().handlers.clear()
+logging.getLogger().addHandler(_file_handler)
+
 logger = logging.getLogger(__name__)
 
 async def run_fastapi():
@@ -29,7 +35,7 @@ async def run_discord_bot():
     @bot.event
     async def on_ready():
         await bot.tree.sync()
-        logger.info(f"Bot is ready! Logged in as {bot.user}")
+        logger.debug(f"Bot is ready! Logged in as {bot.user}")
 
     # Start the bot
     await bot.start(settings.discord_bot_token)
@@ -43,12 +49,11 @@ async def main():
         logger.warning("No OPENAI_API_KEY provided. Generation will fail.")
         
     logger.info("Starting Discord Group AI services...")
-    logger.info(f"Active Behavior: THRESHOLD={settings.response_threshold}")
-    
-    # Flush Redis cache on startup as requested
+    logger.info(f"阈值={settings.response_threshold}")
+
     try:
         await redis_client.flushall()
-        logger.info("Redis cache flushed on startup.")
+        logger.debug("Redis cache flushed on startup.")
     except Exception as e:
         logger.warning(f"Failed to flush Redis cache: {e}")
     

@@ -19,8 +19,32 @@ class Settings(BaseSettings):
     database_url: str = Field(alias="DATABASE_URL")
     redis_url: str = Field(alias="REDIS_URL")
 
-    # Bot 行为（仅根据阈值决定是否回复）
+    # Bot：是否回复的阈值（priority >= 此值才回复）
     response_threshold: float = Field(default=0.5, alias="RESPONSE_THRESHOLD")
+
+    # 决策模型（是否回复、打分、语气等）
+    decision_model: str = Field(default="gpt-4o-mini", alias="DECISION_MODEL")
+    decision_temperature: float = Field(default=0.2, alias="DECISION_TEMPERATURE")
+    decision_context_messages: int = Field(default=15, alias="DECISION_CONTEXT_MESSAGES")
+
+    # 生成模型（回复内容）
+    generation_model: str = Field(default="gpt-4o", alias="GENERATION_MODEL")
+    generation_temperature: float = Field(default=0.7, alias="GENERATION_TEMPERATURE")
+    generation_context_messages: int = Field(default=30, alias="GENERATION_CONTEXT_MESSAGES")
+    generation_min_tokens: int = Field(default=32, alias="GENERATION_MIN_TOKENS")
+
+    # 上下文（Redis 里每个频道保留的条数、过期秒数）
+    context_max_history: int = Field(default=40, alias="CONTEXT_MAX_HISTORY")
+    context_ttl_seconds: int = Field(default=86400, alias="CONTEXT_TTL_SECONDS")
+
+    # 提示词文件（可选，为空则用代码内默认）
+    # 决策提示词内可用占位: {schema} {conversation_log}
+    # 生成提示词内可用占位: {conversation_log} {max_words} {tone}
+    decision_prompt_file: str = Field(default="", alias="DECISION_PROMPT_FILE")
+    generation_prompt_file: str = Field(default="", alias="GENERATION_PROMPT_FILE")
+
+    # 日志目录（所有 logger 只写此目录下文件）
+    log_dir: str = Field(default="logs", alias="LOG_DIR")
 
     model_config = SettingsConfigDict(
         env_file=".env",

@@ -18,7 +18,7 @@ bot = commands.Bot(command_prefix="/", intents=intents)
 
 @bot.event
 async def on_ready():
-    logger.info(f"Bot logged in as {bot.user}")
+    logger.debug(f"Bot logged in as {bot.user}")
 
 @bot.event
 async def on_message(message: discord.Message):
@@ -26,8 +26,6 @@ async def on_message(message: discord.Message):
     if message.author == bot.user:
         return
         
-    logger.info(f"Received message from {message.author.display_name}: {message.content}")
-
     # Ingest the message in the background
     async with AsyncSessionLocal() as session:
         await ingest_message(
@@ -52,9 +50,12 @@ async def on_message(message: discord.Message):
     try:
         context = await context_manager.get_context(message.channel.id)
         decision = await decide_to_speak(context, bot.user.id)
-        logger.info(f"Decision for channel {message.channel.id}: should_respond={decision.should_respond}, priority={decision.priority}, mode={decision.mode}")
+        threshold = settings.response_threshold
+        will_reply = decision.should_respond and decision.priority >= threshold
+        content_preview = (message.content or "").replace("\n", " ").strip()[:200]
+        reply_text = ""
 
-        if decision.should_respond and decision.priority >= settings.response_threshold:
+        if will_reply:
             # 3. Generate response
             async with message.channel.typing():
                 response_text = await generate_response(
@@ -75,7 +76,7 @@ async def on_message(message: discord.Message):
                     sent_msg = await message.channel.send(response_text)
                 
                 if sent_msg:
-                    logger.info(f"Bot sent response to channel {message.channel.id}")
+                    reply_text = response_text
                     # Ingest our own response
                     async with AsyncSessionLocal() as session:
                         await ingest_message(
@@ -89,5 +90,8 @@ async def on_message(message: discord.Message):
                             is_bot=True,
                             created_at=sent_msg.created_at
                         )
+        # 控制台只输出这一行：内容 | 分数 | 回复
+        reply_preview = (reply_text or "不回复").replace("\n", " ").strip()[:200]
+        print(f"内容: {content_preview} | 分数: {decision.priority:.2f} | 回复: {reply_preview}")
     except Exception as e:
         logger.error(f"Error processing message logic: {e}", exc_info=True)

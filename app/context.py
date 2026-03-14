@@ -1,12 +1,14 @@
 import json
 from datetime import datetime
+from app.config import settings
 from app.redis_client import redis_client
 
 class ContextManager:
     """Manages the short-term memory of a channel in Redis."""
-    
-    def __init__(self, max_history: int = 40):
-        self.max_history = max_history
+
+    def __init__(self):
+        self.max_history = settings.context_max_history
+        self.ttl_seconds = settings.context_ttl_seconds
 
     def _get_key(self, channel_id: int) -> str:
         return f"channel_context:{channel_id}"
@@ -35,8 +37,7 @@ class ContextManager:
         await redis_client.rpush(key, json.dumps(msg_data))
         await redis_client.ltrim(key, -self.max_history, -1)
         
-        # Set expiration to 24 hours so inactive channels don't bloat Redis
-        await redis_client.expire(key, 86400)
+        await redis_client.expire(key, self.ttl_seconds)
 
     async def get_context(self, channel_id: int) -> list[dict]:
         """Retrieve the recent messages for a channel."""
