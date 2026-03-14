@@ -16,3 +16,4 @@ openai>=1.16.2
 
 # Utilities (pydantic-settings 已内置 .env 加载，无需 python-dotenv)
 greenlet>=3.0.3
+PyYAML>=6.0

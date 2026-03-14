@@ -1,19 +1,21 @@
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+
 class Settings(BaseSettings):
-    """唯一配置源：从 .env 或环境变量加载，所有模块统一 from app.config import settings。"""
+    """
+    全局配置：从 .env 加载。Discord 相关可为空（多 role 时每个 role 在 roles/<role>/config.yaml 里配）。
+    """
 
     # App
     app_name: str = Field(default="discord_group_ai", alias="APP_NAME")
     debug: bool = Field(default=False, alias="DEBUG")
 
-    # Discord
-    discord_bot_token: str = Field(alias="DISCORD_BOT_TOKEN")
-    discord_client_id: str = Field(alias="DISCORD_CLIENT_ID")
+    # 启用的 role 列表，逗号分隔，如 aggressive,creative。非空时只启动这些 role 的 bot，且每个 role 需有 roles/<name>/config.yaml
+    enabled_roles: str = Field(default="", alias="ENABLED_ROLES")
 
     # LLM
-    openai_api_key: str = Field(alias="OPENAI_API_KEY")
+    openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
 
     # Database & Redis
     database_url: str = Field(alias="DATABASE_URL")
@@ -37,12 +39,6 @@ class Settings(BaseSettings):
     context_max_history: int = Field(default=40, alias="CONTEXT_MAX_HISTORY")
     context_ttl_seconds: int = Field(default=86400, alias="CONTEXT_TTL_SECONDS")
 
-    # 提示词文件（可选，为空则用代码内默认）
-    # 决策提示词内可用占位: {schema} {conversation_log}
-    # 生成提示词内可用占位: {conversation_log} {max_words} {tone}
-    decision_prompt_file: str = Field(default="", alias="DECISION_PROMPT_FILE")
-    generation_prompt_file: str = Field(default="", alias="GENERATION_PROMPT_FILE")
-
     # 日志目录（所有 logger 只写此目录下文件）
     log_dir: str = Field(default="logs", alias="LOG_DIR")
 
@@ -50,7 +46,8 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
-        populate_by_name=True
+        populate_by_name=True,
     )
+
 
 settings = Settings()

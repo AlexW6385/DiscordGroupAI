@@ -1,7 +1,7 @@
 import re
 from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
-from db.models import MessageRecord
+from app.db.models import MessageRecord
 from app.context import context_manager
 
 def clean_message_content(content: str) -> str:

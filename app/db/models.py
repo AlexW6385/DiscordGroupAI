@@ -1,7 +1,7 @@
 from datetime import datetime
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, Float, ForeignKey, Text, BigInteger
 from sqlalchemy.sql import func
-from db.database import Base
+from .database import Base
 
 class GuildSettings(Base):
     __tablename__ = "guild_settings"

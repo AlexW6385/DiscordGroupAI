@@ -1,0 +1,8 @@
+# Role-specific config template
+discord_bot_token: "your-discord-bot-token-here"
+discord_client_id: "your-discord-client-id-here"
+
+response_threshold: 0.5
+# Optional: Override global defaults
+# decision_model: gpt-4o-mini
+# generation_model: gpt-4o

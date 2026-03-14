@@ -2,13 +2,16 @@ import asyncio
 import logging
 import os
 import uvicorn
+import argparse
+from pathlib import Path
+
 from app.config import settings
-from app.discord_bot.bot import bot
+from app.discord_bot.bot import create_bot
+from app.role_config import get_enabled_role_configs
 from app.api.server import app as fastapi_app
 from app.redis_client import redis_client
 
-# 所有日志只写文件，控制台不输出（控制台仅由 bot 打印 内容|分数|回复）
-log_dir = settings.log_dir
+log_dir = getattr(settings, "log_dir", "logs")
 os.makedirs(log_dir, exist_ok=True)
 log_file = os.path.join(log_dir, "discord_bot.log")
 _file_handler = logging.FileHandler(log_file, encoding="utf-8")
@@ -19,54 +22,89 @@ logging.getLogger().addHandler(_file_handler)
 
 logger = logging.getLogger(__name__)
 
-async def run_fastapi():
-    """Run FastAPI app using Uvicorn."""
-    config = uvicorn.Config(fastapi_app, host="0.0.0.0", port=8000, log_level="info")
+
+async def run_fastapi(port: int):
+    config = uvicorn.Config(fastapi_app, host="0.0.0.0", port=port, log_level="info")
     server = uvicorn.Server(config)
-    # Disable uvicorn signal handlers so they don't conflict with discord.py
     await server.serve()
 
-async def run_discord_bot():
-    """Run the Discord Bot."""
-    # Ensure bot loads the admin cog
-    await bot.load_extension("app.discord_bot.admin")
-    
-    # Sync slash commands with Discord
-    @bot.event
-    async def on_ready():
-        await bot.tree.sync()
-        logger.debug(f"Bot is ready! Logged in as {bot.user}")
 
-    # Start the bot
-    await bot.start(settings.discord_bot_token)
+async def run_bot_with_config(role_config):
+    bot = create_bot(role_config)
+    # Check if admin extension exists before loading
+    admin_path = Path(__file__).parent / "app" / "discord_bot" / "admin.py"
+    if admin_path.exists():
+        await bot.load_extension("app.discord_bot.admin")
+    await bot.start(role_config.discord_bot_token)
+
+
+def list_available_roles():
+    roles_dir = Path(__file__).parent / "app" / "roles"
+    if not roles_dir.exists():
+        print("No roles directory found at app/roles")
+        return
+    roles = [d.name for d in roles_dir.iterdir() if d.is_dir() and (d / "config.yaml").exists()]
+    if not roles:
+        print("No valid roles found in app/roles")
+    else:
+        print("Available roles:")
+        for role in roles:
+            print(f"  - {role}")
+
 
 async def main():
-    if not settings.discord_bot_token:
-        logger.error("No DISCORD_BOT_TOKEN provided in environment / .env file.")
+    parser = argparse.ArgumentParser(description="Discord Group AI Bot Runner")
+    parser.add_argument("-r", "--roles", help="Comma-separated list of roles to enable (overrides .env)")
+    parser.add_argument("-l", "--list-roles", action="store_true", help="List available roles and exit")
+    parser.add_argument("-p", "--port", type=int, default=8000, help="API server port (default: 8000)")
+    args = parser.parse_args()
+
+    if args.list_roles:
+        list_available_roles()
         return
-        
-    if not settings.openai_api_key:
+
+    if args.roles:
+        settings.enabled_roles = args.roles
+        logger.info("Roles overridden by CLI: %s", args.roles)
+
+    enabled = (getattr(settings, "enabled_roles", "") or "").strip()
+    if not enabled:
+        # If no roles specified, don't start any bot, just print available roles
+        print("No roles enabled via ENABLED_ROLES or --roles.")
+        list_available_roles()
+        print("\nPlease specify roles to start, e.g., 'python main.py --roles expert'")
+        return
+
+    role_configs = get_enabled_role_configs()
+    if not role_configs:
+        logger.error("Enabled roles defined but no valid config found. (Roles: %s)", enabled)
+        return
+
+    logger.info("Starting %d role bot(s): %s", len(role_configs), [r.role_name for r in role_configs])
+
+    if not getattr(settings, "openai_api_key", ""):
         logger.warning("No OPENAI_API_KEY provided. Generation will fail.")
-        
-    logger.info("Starting Discord Group AI services...")
-    logger.info(f"阈值={settings.response_threshold}")
 
     try:
         await redis_client.flushall()
         logger.debug("Redis cache flushed on startup.")
     except Exception as e:
-        logger.warning(f"Failed to flush Redis cache: {e}")
+        logger.warning("Failed to flush Redis cache: %s", e)
+
+    fastapi_task = asyncio.create_task(run_fastapi(args.port))
+    bot_tasks = [asyncio.create_task(run_bot_with_config(rc)) for rc in role_configs]
     
-    # Run both the Discord Bot and FastAPI server concurrently
-    # The trick here is discord.py wants to own the event loop signals
-    fastapi_task = asyncio.create_task(run_fastapi())
     try:
-        await run_discord_bot()
-    finally:
+        await asyncio.gather(fastapi_task, *bot_tasks)
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        for t in bot_tasks:
+            t.cancel()
         fastapi_task.cancel()
+        logger.info("Shutting down gracefully.")
+
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("Shutting down gracefully.")
+        logger.info("Keyboard interrupt received.")

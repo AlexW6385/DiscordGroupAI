@@ -1,9 +1,15 @@
 import json
 import logging
 import os
+from typing import TYPE_CHECKING
+
 from pydantic import BaseModel, Field
 from openai import AsyncOpenAI
+
 from app.config import settings
+
+if TYPE_CHECKING:
+    from app.role_config import RoleConfig
 
 logger = logging.getLogger(__name__)
 client = AsyncOpenAI(api_key=settings.openai_api_key)
@@ -21,10 +27,11 @@ Use precise decimals (e.g. 0.25, 0.55, 0.72). Most messages should be in the 0.2
 {schema}"""
 
 
-def _load_decision_system_prompt() -> str:
+def _load_decision_system_prompt(role_config: "RoleConfig | None" = None) -> str:
     schema = json.dumps(BotDecisionSchema.model_json_schema(), indent=2)
-    if settings.decision_prompt_file and os.path.isfile(settings.decision_prompt_file):
-        with open(settings.decision_prompt_file, "r", encoding="utf-8") as f:
+    prompt_file = (role_config.decision_prompt_file if role_config else "") or settings.decision_prompt_file
+    if prompt_file and os.path.isfile(prompt_file):
+        with open(prompt_file, "r", encoding="utf-8") as f:
             return f.read().strip().format(schema=schema)
     return DEFAULT_DECISION_PROMPT.format(schema=schema)
 
@@ -37,29 +44,34 @@ class BotDecisionSchema(BaseModel):
     tone: str = Field(description="Tone to use for the response, e.g., 'helpful', 'concise', 'witty'.")
     max_words: int = Field(description="Suggested maximum word count for the response.", default=50)
 
-async def decide_to_speak(context: list[dict], bot_id: int) -> BotDecisionSchema:
+async def decide_to_speak(
+    context: list[dict], bot_id: int, role_config: "RoleConfig | None" = None
+) -> BotDecisionSchema:
     """
     Uses a small/fast LLM to decide if the bot should speak.
+    When role_config is provided, uses its prompt file and model params; else uses global settings.
     """
-    n = settings.decision_context_messages
+    n = role_config.get_decision_context_messages() if role_config else settings.decision_context_messages
     conversation_log = ""
     for msg in context[-n:]:
         user = msg.get("username")
         content = msg.get("content")
         conversation_log += f"{user}: {content}\n"
 
-    system_prompt = _load_decision_system_prompt()
+    system_prompt = _load_decision_system_prompt(role_config)
     raw = ""
 
     try:
+        model = role_config.get_decision_model() if role_config else settings.decision_model
+        temp = role_config.get_decision_temperature() if role_config else settings.decision_temperature
         response = await client.chat.completions.create(
-            model=settings.decision_model,
+            model=model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": f"Recent conversation:\n{conversation_log}\n\nYour decision (JSON):"}
             ],
             response_format={"type": "json_object"},
-            temperature=settings.decision_temperature,
+            temperature=temp,
         )
 
         raw = (response.choices[0].message.content or "").strip()
