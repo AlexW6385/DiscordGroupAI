@@ -92,6 +92,10 @@ async def main():
         logger.warning("Failed to flush Redis cache: %s", e)
 
     fastapi_task = asyncio.create_task(run_fastapi(args.port))
+    
+    from app.utils.logging import log_collector
+    log_collector.set_expected_roles(len(role_configs))
+    
     bot_tasks = [asyncio.create_task(run_bot_with_config(rc)) for rc in role_configs]
     
     try:

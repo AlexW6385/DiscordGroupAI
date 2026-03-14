@@ -29,21 +29,34 @@ async def ingest_message(
     cleaned_content = clean_message_content(raw_content)
     
     # 1. Save to database for long-term analytics/RAG
-    msg_record = MessageRecord(
-        message_id=message_id,
-        guild_id=guild_id,
-        channel_id=channel_id,
-        user_id=user_id,
-        username=username,
-        raw_content=raw_content,
-        cleaned_content=cleaned_content,
-        is_bot=is_bot,
-        created_at=created_at
-    )
-    session.add(msg_record)
-    await session.commit()
+    from sqlalchemy import select
     
-    # 2. Add to Redis context
+    # Check if message already exists to avoid UniqueConstraint violations from multiple bots
+    existing = await session.execute(select(MessageRecord).where(MessageRecord.message_id == message_id))
+    msg_record = existing.scalar_one_or_none()
+    
+    if not msg_record:
+        msg_record = MessageRecord(
+            message_id=message_id,
+            guild_id=guild_id,
+            channel_id=channel_id,
+            user_id=user_id,
+            username=username,
+            raw_content=raw_content,
+            cleaned_content=cleaned_content,
+            is_bot=is_bot,
+            created_at=created_at
+        )
+        session.add(msg_record)
+        try:
+            await session.commit()
+        except Exception:
+            # Fallback if another bot committed just now
+            await session.rollback()
+            existing = await session.execute(select(MessageRecord).where(MessageRecord.message_id == message_id))
+            msg_record = existing.scalar_one_or_none()
+    
+    # 2. Add to Redis context (add_message should be idempotent or handle duplicates)
     await context_manager.add_message(
         channel_id=channel_id,
         message_id=message_id,

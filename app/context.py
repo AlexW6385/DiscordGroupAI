@@ -33,10 +33,18 @@ class ContextManager:
             "timestamp": datetime.utcnow().isoformat()
         }
         
-        # We use a Redis List for simplicity. RPUSH adds to end, LTRIM keeps it bounded.
+        # 1. Check if message already exists in the tail of the list to avoid duplicates from multiple bots
+        last_msgs = await redis_client.lrange(key, -5, -1)
+        for m in last_msgs:
+            try:
+                if json.loads(m).get("message_id") == message_id:
+                    return # Already added
+            except:
+                continue
+
+        # 2. Append if unique
         await redis_client.rpush(key, json.dumps(msg_data))
         await redis_client.ltrim(key, -self.max_history, -1)
-        
         await redis_client.expire(key, self.ttl_seconds)
 
     async def get_context(self, channel_id: int) -> list[dict]:

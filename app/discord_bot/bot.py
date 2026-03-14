@@ -93,8 +93,16 @@ def create_bot(role_config: RoleConfig) -> commands.Bot:
                             is_bot=True,
                             created_at=sent_msg.created_at,
                         )
-            reply_preview = (reply_text or "不回复").replace("\n", " ").strip()[:200]
-            print(f"[{role_config.role_name}] 内容: {content_preview} | 分数: {decision.priority:.2f} | 回复: {reply_preview}")
+            from app.utils.logging import log_collector
+            await log_collector.collect(
+                message_id=message.id,
+                content=message.content,
+                role_name=role_config.role_name,
+                decision=decision,
+                reply_text=reply_text,
+                threshold=role_config.response_threshold,
+                will_reply=will_reply
+            )
         except Exception as e:
             logger.error("Error processing message logic: %s", e, exc_info=True)
 
