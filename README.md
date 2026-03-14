@@ -1,147 +1,65 @@
-## Discord Group AI - 多人格群聊 Bot
+# Discord Group AI - 智能多角色群聊框架
 
-一个面向 Discord 群聊的多人格 AI Bot：
-- 决策层：先判断「要不要说话」「说多少」「语气是什么」。
-- 生成层：再根据上下文和 persona 提示词生成自然的群聊回复。
-- 多人格：一个进程里可以同时跑多只 bot，每只 bot 是一个独立人格（攻击型、创意型、温柔型、知识型）。
+一个工业级的 Discord 群聊多角色 AI 框架。通过独特的“决策层+生成层”架构，实现高度拟人化、有社交分寸感的群聊互动。
 
+## 🌟 核心特性
 
-## 目录结构（与本次需求相关）
+- **多角色并发**：单进程支持无限个独立 AI 角色，每个角色拥有独立 Token、性格定位（Persona）和配置。
+- **双层架构**：
+  - **决策引擎 (Decision Engine)**：LLM 根据上下文打分（0-1），判断“要不要说话”、“以什么语气说”、“说多少”。
+  - **生成引擎 (Generation Engine)**：根据决策建议和特定 Persona 提示词生成极具个性的回复。
+- **社交协调机制**：
+  - **随机抖动 (Jitter)**：模拟人类思考时间，防止机器人秒回。
+  - **Redis 分布式锁**：确保在激烈的群聊中，多个 Bot 不会同时对同一条消息进行回复，保持自然的对话节奏。
+  - **防套娃机制**：内置提示词约束，严禁机器人之间进行无意义的疯狂互撩。
+- **安全加固**：敏感信息（Token）全面支持环境变量覆盖，杜绝硬编码泄露风险。
 
-- `main.py`：进程入口，同时启动 FastAPI + 多个 Discord bot。
-- `app/config.py`：全局配置（从 `.env` 加载）。
-- `app/decision.py`：是否发言的决策逻辑（LLM + JSON schema）。
-- `app/generation.py`：生成真正回复文本的逻辑。
-- `app/discord_bot/bot.py`：根据 `RoleConfig` 创建具体的 Discord bot 实例。
-- `app/role_config.py`：每个 role 的配置加载与合并逻辑。
-- `prompts/decision.txt` / `prompts/generation.txt`：默认通用人格的提示词（单 bot 模式兜底）。
-- `roles/`：每个角色一个子目录，完全独立配置与提示词：
-  - `roles/aggressive/`：攻击型（辛辣讽刺、聪明直接）
-  - `roles/creative/`：创意型（点子多、爱脑洞、能开新话题）
-  - `roles/warm/`：温柔型（友好、女性化气质、惹人喜欢）
-  - `roles/expert/`：知识型（知识渊博、善于解释和回答问题）
+## 📂 项目结构
 
+- `main.py`：应用入口，整合 FastAPI 监控与 Discord Bot 运行。
+- `app/`：
+  - `role_config.py`：动态角色配置加载系统。
+  - `decision.py` & `generation.py`：AI 核心逻辑。
+  - `discord_bot/bot.py`：Discord 事件响应与协调逻辑。
+  - `utils/logging.py`：精美的终端日志收集器，实时展示多 Bot 决策过程。
+- `roles/`：角色定义目录。每个子目录代表一个独立人格：
+  - `aggressive`：互联网毒舌乐子人。
+  - `creative`：点子大王、话题开启者。
+  - `warm`：温柔贴心的情感支柱。
+  - `expert`：冷静、专业的知识百科。
 
-## 配置模型：全局 env + 每 role 独立 config
+## 🚀 快速开始
 
-### 1. 全局 `.env`
+### 1. 环境准备
+确保已安装 Python 3.10+，并配置好 PostgreSQL 和 Redis。
 
-路径：项目根目录下 `.env`（可参考 `.env.example`）。
-
-只放**共用**配置：
-- App & 日志：
-  - `APP_NAME`, `DEBUG`, `LOG_DIR`
-- LLM：
-  - `OPENAI_API_KEY`
-  - `DECISION_MODEL`, `DECISION_TEMPERATURE`, `DECISION_CONTEXT_MESSAGES`
-  - `GENERATION_MODEL`, `GENERATION_TEMPERATURE`, `GENERATION_CONTEXT_MESSAGES`, `GENERATION_MIN_TOKENS`
-- 数据库 / Redis：
-  - `DATABASE_URL`, `REDIS_URL`
-- 上下文配置：
-  - `CONTEXT_MAX_HISTORY`, `CONTEXT_TTL_SECONDS`
-- 单 bot / 多 bot 控制：
-  - `DISCORD_BOT_TOKEN`, `DISCORD_CLIENT_ID`（仅单 bot 模式需要）
-  - `ENABLED_ROLES`：多 role 模式时启用哪些人格
-  - `RESPONSE_THRESHOLD`：单 bot 模式下的全局回复阈值
-  - `DECISION_PROMPT_FILE`, `GENERATION_PROMPT_FILE`：单 bot 模式下使用的默认提示词
-
-
-### 2. 每个 role 自己的配置与提示词
-
-每个 role 一个文件夹：`roles/<name>/`，包含：
-
-- `roles/<name>/config.yaml`
-  - `discord_bot_token`: 该人格使用的 Discord Bot Token（必填）
-  - `discord_client_id`: 该人格的 Application Client ID（必填）
-  - `response_threshold`: 该人格的回复阈值（可选，默认 0.5）
-  - 可选覆盖全局的 LLM 配置：
-    - `decision_model`, `decision_temperature`, `decision_context_messages`
-    - `generation_model`, `generation_temperature`, `generation_context_messages`, `generation_min_tokens`
-  - `decision_prompt_file`, `generation_prompt_file`（一般不填）
-    - 不填时默认指向本目录下的 `decision.txt` / `generation.txt`
-    - 如要拆分成多个 variant，可以在这里指向其他路径
-
-- `roles/<name>/decision.txt`
-  - 决策 persona：说明这个人是什么性格、什么时候更愿意说话、打分标准、tone / max_words 等。
-
-- `roles/<name>/generation.txt`
-  - 说话 persona：真正发出去的消息风格，如何称呼别人、句式、幽默/温柔程度等。
-
-
-### 3. 四个内置角色
-
-#### aggressive（攻击型）
-- 文件夹：`roles/aggressive/`
-- 性格：辛辣讽刺、聪明、直接，喜欢抓别人话里的漏洞和装逼点。
-- 用途：负责群里的「毒舌聪明人」，对弱论点/瞎说/吹牛更爱出手。
-
-#### creative（创意型）
-- 文件夹：`roles/creative/`
-- 性格：点子多、爱脑洞、擅长开新话题和给建议。
-- 用途：有人纠结「接下来干嘛」「有什么想法」时，这个人来给选项、出主意。
-
-#### warm（温柔型）
-- 文件夹：`roles/warm/`
-- 性格：温柔、友好、略带女性化气质，让人觉得「很好相处」。
-- 用途：别人分享、吐槽、受挫、开心或难过时给出温柔、贴心的反应。
-
-#### expert（知识型）
-- 文件夹：`roles/expert/`
-- 性格：知识渊博、冷静，习惯清晰解释问题，像一个很懂的同学。
-- 用途：有人问「是什么」「为什么」「怎么做」「有没有推荐」时，给清晰、简洁的回答。
-
-
-## 运行模式
-
-### 单人格模式（兼容旧用法）
-
-不设置 `ENABLED_ROLES` 或让它为空时：
-- 使用 `.env` 中的：
-  - `DISCORD_BOT_TOKEN`, `DISCORD_CLIENT_ID`
-  - `RESPONSE_THRESHOLD`
-  - `DECISION_PROMPT_FILE`, `GENERATION_PROMPT_FILE`（或默认 `prompts/decision.txt` / `prompts/generation.txt`）
-- 整个进程只跑一个人格。
-
-
-### 多人格模式
-
-设置 `.env`：
-
+### 2. 配置环境变量
+复制 `.env.example` 为 `.env` 并填写核心配置：
 ```env
+OPENAI_API_KEY=sk-...
+DATABASE_URL=postgresql+asyncpg://...
+REDIS_URL=redis://...
 ENABLED_ROLES=aggressive,creative,warm,expert
 ```
 
-然后为每个 role 填好：
-- `roles/aggressive/config.yaml`
-- `roles/creative/config.yaml`
-- `roles/warm/config.yaml`
-- `roles/expert/config.yaml`
+### 3. 配置角色 Token (安全推荐)
+为了安全，建议在 `.env` 中为每个角色配置 Token，格式为 `DISCORD_BOT_TOKEN_{ROLE_NAME}`：
+```env
+DISCORD_BOT_TOKEN_AGGRESSIVE=MTQ...
+DISCORD_BOT_TOKEN_CREATIVE=MTQ...
+# 其他角色依此类推...
+```
 
-此时：
-- 不再使用 `.env` 里的 `DISCORD_BOT_TOKEN` / `DISCORD_CLIENT_ID`；
-- 进程会为 `ENABLED_ROLES` 里的每个名字启动一只 Discord bot；
-- 每只 bot 用各自的 token、各自的阈值和各自的提示词人格。
+### 4. 角色微调
+每个角色在 `roles/<name>/` 下都有 `decision.txt` 和 `generation.txt`，你可以随时修改这些文本来改变他们的“灵魂”。
 
+### 5. 启动
+```bash
+python main.py
+```
 
-## 快速上手步骤
+## 🛠 进阶配置
 
-1. 复制 `.env.example` 为 `.env`，填入：
-   - `OPENAI_API_KEY`
-   - `DATABASE_URL`, `REDIS_URL`
-   - 根据需要设置 `ENABLED_ROLES`。
-
-2. 为每个启用的 role 填写 `roles/<name>/config.yaml`：
-   - `discord_bot_token`
-   - `discord_client_id`
-   - （可选）`response_threshold` 与模型覆盖参数。
-
-3. 根据喜好微调四个角色各自目录下的 `decision.txt` / `generation.txt`。
-
-4. 运行：
-   ```bash
-   cd discord_group_ai
-   python main.py
-   ```
-
-5. 在对应的 Discord 服务器里把各个 bot 拉进需要的群，观察不同人格的发言效果。
+- **RESPONSE_THRESHOLD**：全局或角色单独设置。分值越高，Bot 越“高冷”，只有在认为非常有必要时才会发言。
+- **Context Management**：通过 Redis 维护短时记忆，通过 PostgreSQL 存储长时记录。
 

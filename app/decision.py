@@ -48,7 +48,7 @@ class BotDecisionSchema(BaseModel):
     reason: str = Field(description="Internal reasoning for this decision.", default="")
     target_message_id: str | None = Field(default=None, description="The ID of the message to reply to, if applicable.")
     tone: str = Field(description="Tone to use for the response, e.g., 'helpful', 'concise', 'witty'.")
-    max_words: int = Field(description="Suggested maximum word count for the response.", default=50)
+    max_words: int = Field(description="Suggested maximum word count for the response.", default=15)
 
 async def decide_to_speak(
     context: list[dict], bot_id: int, role_config: "RoleConfig | None" = None
@@ -62,7 +62,9 @@ async def decide_to_speak(
     for msg in context[-n:]:
         user = msg.get("username")
         content = msg.get("content")
-        conversation_log += f"{user}: {content}\n"
+        is_bot = msg.get("is_bot", False)
+        role_label = "[Bot]" if is_bot else "[Human]"
+        conversation_log += f"{role_label} {user}: {content}\n"
 
     system_prompt = _load_decision_system_prompt(conversation_log, role_config)
     raw = ""
