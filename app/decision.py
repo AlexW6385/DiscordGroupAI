@@ -16,24 +16,30 @@ client = AsyncOpenAI(api_key=settings.openai_api_key)
 
 DEFAULT_DECISION_PROMPT = """You are the decision engine for a Discord group chat bot. For each turn you must output a priority score from 0.0 to 1.0.
 
+Recent conversation (for context):
+{conversation_log}
+
 Scoring rules (use the full range; do NOT cluster at 0.7–0.8):
 - 0.0–0.2: No need to reply (greetings to others, off-topic, meme-only, or replying would be noise).
 - 0.3–0.4: Weak reason to reply (topic slightly relevant but bot not needed).
 - 0.5–0.6: Optional (could add something useful but not necessary).
-- 0.7–0.8: Good reason (e.g. direct question, or clearly relevant and valuable to chime in).
+- 0.7–0.8: Good reason (direct question, or clearly relevant and valuable to chime in).
 - 0.9–1.0: Strong reason (explicitly @ the bot, or urgent/clear request for the bot).
 
 Use precise decimals (e.g. 0.25, 0.55, 0.72). Most messages should be in the 0.2–0.5 range; reserve 0.7+ only when the bot is clearly needed. Also set should_respond, mode, tone, max_words. Output JSON exactly matching this schema:
 {schema}"""
 
 
-def _load_decision_system_prompt(role_config: "RoleConfig | None" = None) -> str:
+def _load_decision_system_prompt(conversation_log: str, role_config: "RoleConfig | None" = None) -> str:
     schema = json.dumps(BotDecisionSchema.model_json_schema(), indent=2)
     prompt_file = (role_config.decision_prompt_file if role_config else "") or settings.decision_prompt_file
     if prompt_file and os.path.isfile(prompt_file):
         with open(prompt_file, "r", encoding="utf-8") as f:
-            return f.read().strip().format(schema=schema)
-    return DEFAULT_DECISION_PROMPT.format(schema=schema)
+            return f.read().strip().format(
+                schema=schema,
+                conversation_log=conversation_log
+            )
+    return DEFAULT_DECISION_PROMPT.format(schema=schema, conversation_log=conversation_log)
 
 class BotDecisionSchema(BaseModel):
     should_respond: bool = Field(description="Whether the bot should respond to the current context.")
@@ -58,7 +64,7 @@ async def decide_to_speak(
         content = msg.get("content")
         conversation_log += f"{user}: {content}\n"
 
-    system_prompt = _load_decision_system_prompt(role_config)
+    system_prompt = _load_decision_system_prompt(conversation_log, role_config)
     raw = ""
 
     try:

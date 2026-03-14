@@ -17,11 +17,12 @@ class LogCollector:
 
     def set_expected_roles(self, count: int):
         self.expected_roles = count
-
     async def collect(self, message_id: int, content: str, role_name: str, decision: Any, reply_text: str, threshold: float, will_reply: bool):
         async with self.lock:
             if message_id not in self.content_cache:
                 self.content_cache[message_id] = content
+                # 容错：如果某个 Bot 挂了或太慢，5秒后强制刷新已有的日志
+                asyncio.create_task(self._timeout_flush(message_id))
             
             entry = {
                 "role": role_name,
@@ -31,11 +32,17 @@ class LogCollector:
                 "reason": decision.reason,
                 "reply": reply_text or "（不回复）"
             }
-            # Special case for specific thresholds if needed, but usually 0.5 is the prompt's threshold
             
             self.buffers[message_id].append(entry)
             
             if len(self.buffers[message_id]) >= self.expected_roles:
+                await self._flush(message_id)
+
+    async def _timeout_flush(self, message_id: int):
+        await asyncio.sleep(self.flush_timeout)
+        async with self.lock:
+            if message_id in self.buffers:
+                # 依然在缓存中，说明没收齐，执行部分刷新
                 await self._flush(message_id)
 
     async def _flush(self, message_id: int):
