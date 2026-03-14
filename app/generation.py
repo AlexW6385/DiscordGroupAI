@@ -35,7 +35,7 @@ Generate your response directly:"""
             {"role": "system", "content": system_prompt}
         ],
         temperature=0.7,
-        max_tokens=max_words * 2 # rough token estimation
+        max_tokens=max(max_words * 2, 32),
     )
 
     return response.choices[0].message.content.strip()

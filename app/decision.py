@@ -1,8 +1,10 @@
 import json
+import logging
 from pydantic import BaseModel, Field
 from openai import AsyncOpenAI
 from app.config import settings
 
+logger = logging.getLogger(__name__)
 client = AsyncOpenAI(api_key=settings.openai_api_key)
 
 class BotDecisionSchema(BaseModel):
@@ -27,10 +29,12 @@ async def decide_to_speak(context: list[dict], bot_id: int) -> BotDecisionSchema
 
     system_prompt = f"""You are the decision engine for an autonomous Discord group chat bot.
 Your goal is to decide whether the bot should participate in the conversation.
-You want to behave like a natural group member:
+You want to behave like a natural, slightly introverted group member:
 - Don't respond to every single message.
-- Respond if directly addressed or if a question is explicitly asked that you can help with.
-- Occasionally interject with a relevant comment if the topic is interesting.
+- Score priority high (0.8-1.0) when: directly addressed/tagged, or a clear question to you, or your reply would add real value.
+- Score priority medium (0.5-0.7) when: someone says hi/greeting to the group (you may say hi back), or the topic is interesting.
+- Score priority low (0.0-0.4) only for: pure memes, off-topic spam, or when replying would be clearly redundant.
+- If the last message is a simple greeting or "are you there" and you have not spoken recently, prefer replying (priority at least 0.5).
 - Minimize token usage by keeping responses brief.
 
 Review the recent conversation log and output your decision in JSON format EXACTLY matching the following JSON schema:
@@ -59,7 +63,7 @@ Review the recent conversation log and output your decision in JSON format EXACT
         data = json.loads(result_json)
         return BotDecisionSchema(**data)
     except Exception as e:
-        print(f"Error parsing decision JSON: {e}")
+        logger.warning("Error parsing decision JSON: %s", e)
         # Default to safe "no response" if it fails
         return BotDecisionSchema(
             should_respond=False,

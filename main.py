@@ -4,6 +4,7 @@ import uvicorn
 from app.config import settings
 from app.discord_bot.bot import bot
 from app.api.server import app as fastapi_app
+from app.redis_client import redis_client
 
 # Setup basic logging
 logging.basicConfig(
@@ -42,6 +43,14 @@ async def main():
         logger.warning("No OPENAI_API_KEY provided. Generation will fail.")
         
     logger.info("Starting Discord Group AI services...")
+    logger.info(f"Active Behavior: THRESHOLD={settings.response_threshold}")
+    
+    # Flush Redis cache on startup as requested
+    try:
+        await redis_client.flushall()
+        logger.info("Redis cache flushed on startup.")
+    except Exception as e:
+        logger.warning(f"Failed to flush Redis cache: {e}")
     
     # Run both the Discord Bot and FastAPI server concurrently
     # The trick here is discord.py wants to own the event loop signals
